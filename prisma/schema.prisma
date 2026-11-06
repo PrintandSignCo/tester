@@ -1,0 +1,313 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+  CLIENT
+}
+
+enum PricingMethod {
+  SQM
+  UNIT
+  LINEAR
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+}
+
+enum JobStatus {
+  NOT_STARTED
+  IN_PRODUCTION
+  FINISHED
+  INVOICED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT_TO_XERO
+}
+
+enum JobRequestStatus {
+  NEW
+  QUOTED
+  CONVERTED
+  CLOSED
+}
+
+enum AuditEntity {
+  QUOTE
+  PRODUCT
+  TIER
+  SHOP
+  JOB
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  name         String
+  passwordHash String
+  role         UserRole
+  clientId     String?
+  client       Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  resetTokens  PasswordReset[]
+  audits       AuditLog[]
+  quotes       Quote[]         @relation("QuoteAuthor")
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model Tier {
+  id        String   @id
+  name      String
+  sortOrder Int
+  clients   Client[]
+  quotes    Quote[]
+}
+
+model ShopSettings {
+  id               String  @id @default("shop")
+  laminationPerSqm Decimal @db.Decimal(12, 2)
+  eyeletEach       Decimal @db.Decimal(12, 2)
+  installPerHour   Decimal @db.Decimal(12, 2)
+  designPerHour    Decimal @db.Decimal(12, 2)
+}
+
+model Product {
+  id           String        @id @default(cuid())
+  name         String
+  method       PricingMethod
+  materialCost Decimal       @db.Decimal(12, 2)
+  markupT1     Decimal       @db.Decimal(8, 2)
+  markupT2     Decimal       @db.Decimal(8, 2)
+  markupT3     Decimal       @db.Decimal(8, 2)
+  labourSetup  Decimal       @db.Decimal(12, 2)
+  minCharge    Decimal       @db.Decimal(12, 2)
+  examplePrice Boolean       @default(false)
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  lines        QuoteLine[]
+}
+
+model Client {
+  id        String       @id @default(cuid())
+  name      String
+  company   String       @default("")
+  email     String       @default("")
+  phone     String       @default("")
+  tierId    String
+  tier      Tier         @relation(fields: [tierId], references: [id])
+  example   Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  users     User[]
+  quotes    Quote[]
+  jobs      Job[]
+  invoices  Invoice[]
+  requests  JobRequest[]
+}
+
+model Quote {
+  id             String      @id @default(cuid())
+  number         String      @unique
+  clientId       String?
+  client         Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  customer       String      @default("")
+  tierId         String
+  tier           Tier        @relation(fields: [tierId], references: [id])
+  date           DateTime    @db.Date
+  status         QuoteStatus @default(DRAFT)
+  createdById    String?
+  createdBy      User?       @relation("QuoteAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  acceptedAt     DateTime?
+  acceptedByName String      @default("")
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  lines          QuoteLine[]
+  job            Job?
+  request        JobRequest?
+}
+
+model QuoteLine {
+  id           String  @id @default(cuid())
+  quoteId      String
+  quote        Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product @relation(fields: [productId], references: [id])
+  sortOrder    Int     @default(0)
+  widthMm      Decimal @db.Decimal(12, 2)
+  heightMm     Decimal @db.Decimal(12, 2)
+  qty          Decimal @db.Decimal(12, 2)
+  lamination   Boolean @default(false)
+  eyelets      Int     @default(0)
+  installHours Decimal @db.Decimal(8, 2) @default(0)
+  designHours  Decimal @db.Decimal(8, 2) @default(0)
+  note         String  @default("")
+}
+
+model Job {
+  id            String      @id @default(cuid())
+  number        String      @unique
+  quoteId       String?     @unique
+  quote         Quote?      @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  quoteNumber   String      @default("")
+  clientId      String?
+  client        Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientName    String
+  clientCompany String      @default("")
+  clientEmail   String      @default("")
+  dueDate       DateTime?   @db.Date
+  notes         String      @default("")
+  status        JobStatus   @default(NOT_STARTED)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  lines         JobLine[]
+  invoice       Invoice?
+  artworks      Artwork[]
+  exports       JobExport[]
+  request       JobRequest?
+}
+
+model JobLine {
+  id          String  @id @default(cuid())
+  jobId       String
+  job         Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sortOrder   Int     @default(0)
+  description String
+  widthMm     Decimal @db.Decimal(12, 2)
+  heightMm    Decimal @db.Decimal(12, 2)
+  qty         Decimal @db.Decimal(12, 2)
+  unitAmount  Decimal @db.Decimal(12, 2)
+  note        String  @default("")
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  number        String        @unique
+  jobId         String        @unique
+  job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  quoteNumber   String        @default("")
+  clientId      String?
+  client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientName    String
+  clientCompany String        @default("")
+  clientEmail   String        @default("")
+  subtotal      Decimal       @db.Decimal(12, 2)
+  gst           Decimal       @db.Decimal(12, 2)
+  total         Decimal       @db.Decimal(12, 2)
+  issueDate     DateTime      @db.Date
+  dueDate       DateTime      @db.Date
+  status        InvoiceStatus @default(DRAFT)
+  terms         String        @default("14 days")
+  xeroInvoiceId String        @default("")
+  xeroError     String        @default("")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  lines         InvoiceLine[]
+}
+
+model InvoiceLine {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  sortOrder   Int     @default(0)
+  description String
+  qty         Decimal @db.Decimal(12, 2)
+  unitAmount  Decimal @db.Decimal(12, 2)
+}
+
+model JobRequest {
+  id        String           @id @default(cuid())
+  number    String           @unique
+  clientId  String
+  client    Client           @relation(fields: [clientId], references: [id])
+  title     String
+  material  String           @default("")
+  widthMm   Decimal          @db.Decimal(12, 2) @default(0)
+  heightMm  Decimal          @db.Decimal(12, 2) @default(0)
+  qty       Decimal          @db.Decimal(12, 2) @default(1)
+  dueDate   DateTime?        @db.Date
+  notes     String           @default("")
+  status    JobRequestStatus @default(NEW)
+  quoteId   String?          @unique
+  quote     Quote?           @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  jobId     String?          @unique
+  job       Job?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  artworks  Artwork[]
+}
+
+model Artwork {
+  id           String      @id @default(cuid())
+  filename     String
+  mime         String
+  sizeBytes    Int
+  storageKey   String
+  driver       String
+  boxFileId    String      @default("")
+  boxFolderId  String      @default("")
+  jobId        String?
+  job          Job?        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  requestId    String?
+  request      JobRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  uploadedById String?
+  createdAt    DateTime    @default(now())
+}
+
+model JobExport {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  ok        Boolean
+  targetUrl String   @default("")
+  response  String   @default("")
+  payload   Json
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  entity    AuditEntity
+  entityId  String
+  entityRef String      @default("")
+  summary   String
+  details   Json
+  actorId   String?
+  actor     User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorName String
+  createdAt DateTime    @default(now())
+
+  @@index([entity, entityId, createdAt])
+}
+
+model ChangelogEntry {
+  id          String   @id @default(cuid())
+  version     String   @unique
+  title       String
+  detail      String   @db.Text
+  requestedBy String
+  releasedAt  DateTime
+  createdAt   DateTime @default(now())
+}
